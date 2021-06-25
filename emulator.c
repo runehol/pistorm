@@ -79,17 +79,18 @@ extern int m68ki_initial_cycles;
 extern int m68ki_remaining_cycles;
 
 #define M68K_SET_IRQ(i) old_level = CPU_INT_LEVEL; \
-	CPU_INT_LEVEL = (i << 8); \
-	if(old_level != 0x0700 && CPU_INT_LEVEL == 0x0700) \
-		m68ki_cpu.nmi_pending = TRUE;
-#define M68K_END_TIMESLICE 	m68ki_initial_cycles = GET_CYCLES(); \
-	SET_CYCLES(0);
+    CPU_INT_LEVEL = (i << 8); \
+    if(old_level != 0x0700 && CPU_INT_LEVEL == 0x0700) \
+        m68ki_cpu.nmi_pending = TRUE;
+#define M68K_END_TIMESLICE  m68ki_initial_cycles = GET_CYCLES(); \
+    SET_CYCLES(0);
 #else
 #define M68K_SET_IRQ m68k_set_irq
 #define M68K_END_TIMESLICE m68k_end_timeslice()
 #endif
 
 #define NOP asm("nop"); asm("nop"); asm("nop"); asm("nop");
+#define MEMORY_BARRIER() __sync_synchronize()
 
 #define DEBUG_EMULATOR
 #ifdef DEBUG_EMULATOR
@@ -108,9 +109,9 @@ const uint16_t irq_delay = 0;
 
 struct DoReset
 {
-	char pad0[64];
-	unsigned int value;
-	char pad1[64];
+    char pad0[64];
+    unsigned int value;
+    char pad1[64];
 };
 
 volatile struct DoReset do_reset = {0};
@@ -128,13 +129,11 @@ void *ipl_task(void *args) {
 
     if (!(value & (1 << PIN_IPL_ZERO))) {
       old_irq = irq_delay;
-      //NOP
       if (!irq) {
-        M68K_END_TIMESLICE;
-        NOP
         irq = 1;
+        MEMORY_BARRIER();
+        M68K_END_TIMESLICE;
       }
-      //usleep(0);
     }
     else {
       if (irq) {
@@ -144,9 +143,8 @@ void *ipl_task(void *args) {
         else {
           irq = 0;
         }
+        MEMORY_BARRIER();
         M68K_END_TIMESLICE;
-        NOP
-        //usleep(0);
       }
     }
     if(do_reset.value==0)
@@ -159,6 +157,7 @@ void *ipl_task(void *args) {
         {
           printf("Amiga Reset is down...\n");
           do_reset.value=1;
+          MEMORY_BARRIER();
           M68K_END_TIMESLICE;
         }
         else
@@ -177,8 +176,7 @@ void *ipl_task(void *args) {
       else
         gayleirq = 0;
     }*/
-    //usleep(0);
-    //NOP NOP
+
 noppers:
     NOP NOP NOP NOP NOP NOP NOP NOP
     //NOP NOP NOP NOP NOP NOP NOP NOP
@@ -205,8 +203,8 @@ static inline unsigned int inline_read_status_reg() {
 }
 
 void *cpu_task() {
-	m68ki_cpu_core *state = &m68ki_cpu;
-	m68k_pulse_reset(state);
+    m68ki_cpu_core *state = &m68ki_cpu;
+    m68k_pulse_reset(state);
 
 cpu_loop:
   if (mouse_hook_enabled) {
@@ -222,17 +220,19 @@ cpu_loop:
     printf("%.8X (%.8X)]] %s\n", m68k_get_reg(NULL, M68K_REG_PC), (m68k_get_reg(NULL, M68K_REG_PC) & 0xFFFFFF), disasm_buf);
     if (do_disasm)
       do_disasm--;
-	  m68k_execute(state, 1);
+      m68k_execute(state, 1);
   }
   else {
     if (cpu_emulation_running) {
-		if (irq)
-			m68k_execute(state, 5);
-		else
-			m68k_execute(state, loop_cycles);
+        MEMORY_BARRIER();
+        if (irq)
+            m68k_execute(state, 5);
+        else
+            m68k_execute(state, loop_cycles);
     }
   }
 
+  MEMORY_BARRIER();
   while (irq) {
       last_irq = ((inline_read_status_reg() & 0xe000) >> 13);
       if (last_irq != 0 && last_irq != last_last_irq) {
@@ -240,12 +240,16 @@ cpu_loop:
         M68K_SET_IRQ(last_irq);
       }
       m68k_execute(state, 50);
+      MEMORY_BARRIER();
   }
+
+  MEMORY_BARRIER();
   if (!irq && last_last_irq != 0) {
     //M68K_SET_IRQ(0);
     last_last_irq = 0;
   }
 
+  MEMORY_BARRIER();
   if (do_reset.value) {
     cpu_pulse_reset();
     do_reset.value=0;
@@ -278,7 +282,7 @@ cpu_loop:
   }
 
   if (end_signal)
-	  goto stop_cpu_emulation;
+      goto stop_cpu_emulation;
 
   goto cpu_loop;
 
@@ -370,7 +374,7 @@ key_loop:
       }
       if (c == 'q') {
         printf("Quitting and exiting emulator.\n");
-	      end_signal = 1;
+          end_signal = 1;
         goto key_end;
       }
       if (c == 'd') {
@@ -591,7 +595,7 @@ switch_config:
 
   m68k_init();
   printf("Setting CPU type to %d.\n", cpu_type);
-	m68k_set_cpu_type(&m68ki_cpu, cpu_type);
+  m68k_set_cpu_type(&m68ki_cpu, cpu_type);
   cpu_pulse_reset();
 
   pthread_t ipl_tid = 0, cpu_tid, kbd_tid;
@@ -651,14 +655,14 @@ switch_config:
 }
 
 void cpu_pulse_reset(void) {
-	m68ki_cpu_core *state = &m68ki_cpu;
+  m68ki_cpu_core *state = &m68ki_cpu;
   ps_pulse_reset();
 
   ovl = 1;
   if (cfg->platform->handle_reset)
     cfg->platform->handle_reset(cfg);
 
-	m68k_pulse_reset(state);
+  m68k_pulse_reset(state);
 }
 
 int cpu_irq_ack(int level) {
