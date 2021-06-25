@@ -104,15 +104,22 @@ unsigned int loop_cycles = 300, irq_status = 0;
 struct emulator_config *cfg = NULL;
 char keyboard_file[256] = "/dev/input/event1";
 
-uint64_t trig_irq = 0, serv_irq = 0;
-uint16_t irq_delay = 0;
-unsigned int amiga_reset=0, amiga_reset_last=0;
-unsigned int do_reset=0;
+const uint16_t irq_delay = 0;
+
+struct DoReset
+{
+	char pad0[64];
+	unsigned int value;
+	char pad1[64];
+};
+
+volatile struct DoReset do_reset = {0};
 
 void *ipl_task(void *args) {
   printf("IPL thread running\n");
   uint16_t old_irq = 0;
   uint32_t value;
+  unsigned int amiga_reset=0, amiga_reset_last=0;
 
   while (1) {
     value = *(gpio + 13);
@@ -142,7 +149,7 @@ void *ipl_task(void *args) {
         //usleep(0);
       }
     }
-    if(do_reset==0)
+    if(do_reset.value==0)
     {
       amiga_reset=(value & (1 << PIN_RESET));
       if(amiga_reset!=amiga_reset_last)
@@ -151,7 +158,7 @@ void *ipl_task(void *args) {
         if(amiga_reset==0)
         {
           printf("Amiga Reset is down...\n");
-          do_reset=1;
+          do_reset.value=1;
           M68K_END_TIMESLICE;
         }
         else
@@ -239,9 +246,9 @@ cpu_loop:
     last_last_irq = 0;
   }
 
-  if (do_reset) {
+  if (do_reset.value) {
     cpu_pulse_reset();
-    do_reset=0;
+    do_reset.value=0;
     usleep(1000000); // 1sec
     rtg_on=0;
 //    while(amiga_reset==0);
@@ -439,8 +446,6 @@ void sigint_handler(int sig_num) {
     usleep(0);
   }
 
-  printf("IRQs triggered: %lld\n", trig_irq);
-  printf("IRQs serviced: %lld\n", serv_irq);
 
   exit(0);
 }
